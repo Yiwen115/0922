@@ -20,7 +20,7 @@
       <p class="text-xs text-slate-500 mt-1">定位與時間由系統自動抓取，填寫花況與拍照後即可送出。</p>
     </div>
 
-    <!-- GPS 定位狀態提示列 -->
+    <!-- GPS 狀態列 -->
     <div class="p-3 bg-rose-50/40 border border-rose-100 rounded-2xl flex items-center justify-between text-xs">
       <div class="flex items-center gap-2">
         <span class="text-slate-500 font-medium">📍 定位狀態：</span>
@@ -32,10 +32,8 @@
       <button type="button" id="reGpsBtn" class="text-pink-600 font-medium hover:underline">重新定位</button>
     </div>
 
-    <!-- 調查表單 -->
+    <!-- 表單 -->
     <form id="ecoForm" class="space-y-4">
-      
-      <!-- 隱藏 GPS 座標 (由系統自動抓取填入) -->
       <input type="hidden" id="gps">
 
       <!-- 1. 校園地點 -->
@@ -74,7 +72,7 @@
         >
       </div>
 
-      <!-- 4. 照片檔案選取（支援拍照或從手機相簿選取） -->
+      <!-- 4. 照片選取（拍照或相簿檔案） -->
       <div>
         <label class="block text-xs font-semibold text-slate-700 mb-1">花朵照片 (拍照或相簿檔案)</label>
         <div class="flex items-center gap-3">
@@ -85,7 +83,7 @@
           <span id="fileNameDisplay" class="text-xs text-slate-400 truncate max-w-[180px]">未選取檔案</span>
         </div>
 
-        <!-- 縮圖即時預覽區塊 -->
+        <!-- 縮圖即時預覽 -->
         <div id="previewContainer" class="hidden mt-2.5 relative inline-block">
           <img id="imagePreview" src="" alt="花朵預覽" class="w-24 h-24 object-cover rounded-2xl border border-rose-200 shadow-sm">
           <button type="button" id="removePhotoBtn" class="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow hover:bg-rose-600">×</button>
@@ -113,13 +111,12 @@
         <span id="btnText">提交花朵紀錄 (Submit)</span>
       </button>
 
-      <!-- 結果提示訊息 -->
+      <!-- 結果提示 -->
       <p id="resultMsg" class="text-xs text-center font-medium min-h-[1rem]"></p>
     </form>
   </div>
 
   <script>
-    // 您的真實 Apps Script 網頁應用程式網址
     const GAS_URL = "https://script.google.com/macros/s/AKfycbzHheSBJVP2fbxTatezhDVgj4uYLiU_NPggZerKCJXE8un98SImLz6QMz7pDGv51/exec";
 
     const gpsInput = document.getElementById('gps');
@@ -138,9 +135,8 @@
 
     let selectedFileBase64 = "";
     let selectedFileName = "";
-    let selectedFileMime = "";
+    let selectedFileMime = "image/jpeg";
 
-    // 格式化當前精確時間字串 (YYYY-MM-DD HH:mm:ss)
     function getCurrentDateTime() {
       const now = new Date();
       const pad = (n) => String(n).padStart(2, '0');
@@ -176,43 +172,83 @@
       );
     }
 
-    // 網頁載入時自動執行定位
     window.addEventListener('DOMContentLoaded', startGeolocation);
     reGpsBtn.addEventListener('click', startGeolocation);
 
-    // 處理選取照片或拍照
-    photoFileInput.addEventListener('change', (e) => {
+    // 核心關鍵：將大圖在瀏覽器端自動縮小壓縮至 1024px，避免超出 GAS 傳輸大小上限
+    function compressAndReadImage(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 1024;
+            const MAX_HEIGHT = 1024;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+              if (width > MAX_WIDTH) {
+                height = Math.round((height * MAX_WIDTH) / width);
+                width = MAX_WIDTH;
+              }
+            } else {
+              if (height > MAX_HEIGHT) {
+                width = Math.round((width * MAX_HEIGHT) / height);
+                height = MAX_HEIGHT;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // 壓縮成 0.8 品質的 JPEG
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            resolve(compressedDataUrl);
+          };
+          img.onerror = reject;
+          img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // 選擇照片事件
+    photoFileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      selectedFileName = file.name;
-      selectedFileMime = file.type || "image/jpeg";
-      fileNameDisplay.textContent = file.name;
+      selectedFileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+      selectedFileMime = "image/jpeg";
+      fileNameDisplay.textContent = "處理中...";
 
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const fullDataUrl = event.target.result;
-        imagePreview.src = fullDataUrl;
+      try {
+        const compressedDataUrl = await compressAndReadImage(file);
+        imagePreview.src = compressedDataUrl;
         previewContainer.classList.remove('hidden');
-
-        // 提取 Base64 資料
-        selectedFileBase64 = fullDataUrl.split(',')[1];
-      };
-      reader.readAsDataURL(file);
+        selectedFileBase64 = compressedDataUrl.split(',')[1];
+        fileNameDisplay.textContent = selectedFileName;
+      } catch (err) {
+        alert("照片讀取處理失敗，請換一張照片重試。");
+        fileNameDisplay.textContent = "處理失敗";
+      }
     });
 
-    // 移除已選照片
+    // 移除照片
     removePhotoBtn.addEventListener('click', () => {
       photoFileInput.value = "";
       selectedFileBase64 = "";
       selectedFileName = "";
-      selectedFileMime = "";
       fileNameDisplay.textContent = "未選取檔案";
       previewContainer.classList.add('hidden');
       imagePreview.src = "";
     });
 
-    // 點擊「提交送出」時瞬間抓取時間並發送 POST
+    // 送出表單
     ecoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
@@ -233,7 +269,7 @@
       submitBtn.disabled = true;
       submitBtn.classList.add('opacity-70', 'cursor-not-allowed');
       spinner.classList.remove('hidden');
-      btnText.textContent = selectedFileBase64 ? '照片上傳寫入中...' : '資料送出中...';
+      btnText.textContent = selectedFileBase64 ? '照片壓縮上傳中...' : '資料送出中...';
       resultMsg.textContent = '';
 
       try {
@@ -250,7 +286,6 @@
           resultMsg.className = 'text-xs text-center font-medium text-pink-600';
           resultMsg.textContent = `🌸 資料已於 ${submitTime} 成功記錄！`;
 
-          // 清空部分欄位方便下一筆紀錄
           document.getElementById('species').value = '';
           document.getElementById('quantity').value = '';
           document.getElementById('notes').value = '';
